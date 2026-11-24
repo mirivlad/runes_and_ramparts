@@ -1,0 +1,9 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fresh,build,canBuild,upgrade,sell,start,step,validSave,position,routeLength} from '../src/game.ts';
+import {waves} from '../src/content.ts';
+test('construction respects terrain, road, budget and spacing',()=>{const s=fresh();assert(!canBuild(s,{x:90,y:112},'archer'));assert(!canBuild(s,{x:80,y:432},'archer'));assert(build(s,{x:100,y:190},'archer'));assert(!build(s,{x:101,y:190},'mage'));assert.equal(s.gold,245);s.gold=0;assert(!build(s,{x:250,y:190},'mage'))});
+test('upgrade branches and refund',()=>{const s=fresh();assert(build(s,{x:100,y:190},'archer'));const t=s.towers[0];assert(upgrade(s,t));assert(!upgrade(s,t));assert(upgrade(s,t,1));assert.equal(t.branch,1);assert(!upgrade(s,t,0));const before=s.gold;assert(sell(s,t));assert.equal(s.gold,before+Math.floor(t.spent*.65))});
+test('waves spawn, defend, reward and end',()=>{const s=fresh();s.gold=5000;for(const x of [48,100,224,276,328])assert(build(s,{x,y:180},'mage'));assert(start(s));assert(!start(s));for(let i=0;i<3600&&s.phase==='battle';i++)step(s,1/60);assert.equal(s.phase,'ready');assert(s.score>0);assert.equal(s.lives,20)});
+test('loss and route endpoint',()=>{const s=fresh();s.lives=1;start(s);for(let i=0;i<7200&&s.phase==='battle';i++)step(s,1/60);assert.equal(s.phase,'lost');assert.equal(s.lives,0);assert.equal(position(routeLength).x,984)});
+test('complete campaign and serialization',()=>{const s=fresh();s.wave=waves.length-1;s.gold=100000;for(let x=48;x<900;x+=48)for(let y=48;y<520;y+=48)if(build(s,{x,y},'mage')){const t=s.towers.at(-1)!;upgrade(s,t);upgrade(s,t,0)}assert(start(s));for(let i=0;i<7200&&s.phase==='battle';i++)step(s,1/60);assert.equal(s.phase,'won');assert(validSave(JSON.parse(JSON.stringify(s))));assert(!validSave({version:1}))});
