@@ -572,6 +572,7 @@ void ChangeRegisters(PT3_Channel_Parameters *Chan, int ch) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+int rr_pt3_looped=0;
 void func_play_tick(int ch) {
 	int i, i2, b;
 	uint8_t *idx = PlConsts[ch].RAM.Index;
@@ -588,8 +589,7 @@ void func_play_tick(int ch) {
 			if (idx[pl->PT3_[0].Address_In_Pattern]==0) {
 //				printf("/\n");
 				pt3->CurrentPosition++;
-				if (pt3->CurrentPosition ==	ram->PT3_NumberOfPositions)
-					pt3->CurrentPosition = ram->PT3_LoopPosition;
+				if (pt3->CurrentPosition ==	ram->PT3_NumberOfPositions){rr_pt3_looped=1;pt3->CurrentPosition = ram->PT3_LoopPosition;}
 				i = ram->PT3_PositionList[pt3->CurrentPosition];
 				b = PlConsts[ch].TS;
 				if (b != 0x20) i = b * 3 - 3 - i;
