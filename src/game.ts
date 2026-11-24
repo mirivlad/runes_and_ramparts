@@ -1,6 +1,6 @@
-import {WIDTH,HEIGHT,path,obstacles,towers,enemies,waves,type Point,type TowerKind,type EnemyKind} from './content.ts';
+import {WIDTH,HEIGHT,MAX_LEVEL,path,obstacles,towers,enemies,waves,type Point,type TowerKind,type EnemyKind} from './content.ts';
 export type Tower=Point&{id:number,kind:TowerKind,level:number,branch:number,cool:number,angle:number,spent:number,priority:'first'|'strong'|'near'};
-export type Enemy=Point&{id:number,kind:EnemyKind,hp:number,maxHp:number,distance:number,angle:number,slow:number,poison:number,heal:number,hit:number};
+export type Enemy=Point&{id:number,kind:EnemyKind,hp:number,maxHp:number,distance:number,angle:number,slow:number,poison:number,heal:number,hit:number,slowFactor?:number,poisonDps?:number,corrosion?:number,burn?:number,burnDps?:number};
 export type Shot=Point&{kind:TowerKind,tx:number,ty:number,life:number,max:number};
 export type Effect=Point&{kind:'hit'|'death'|'build'|'heal'|'leak'|'wave',color:number,life:number,max:number};
 export type State={version:1,gold:number,lives:number,wave:number,score:number,phase:'ready'|'battle'|'won'|'lost',time:number,nextId:number,spawn:number,queue:EnemyKind[],towers:Tower[],enemies:Enemy[],shots:Shot[],effects:Effect[]};
@@ -13,21 +13,68 @@ function pathDistance(p:Point){return Math.min(...path.slice(1).map((b,i)=>{cons
 export function fresh():State{return{version:1,gold:310,lives:20,wave:0,score:0,phase:'ready',time:0,nextId:1,spawn:0,queue:[],towers:[],enemies:[],shots:[],effects:[]}}
 export function canBuild(s:State,p:Point,kind:TowerKind){return (s.phase==='ready'||s.phase==='battle')&&s.gold>=towers[kind].cost&&p.x>=22&&p.y>=22&&p.x<=WIDTH-22&&p.y<=HEIGHT-22&&pathDistance(p)>=43&&!obstacles.some(o=>dist(p,o)<o.r+18)&&!s.towers.some(t=>dist(t,p)<43)}
 export function build(s:State,p:Point,kind:TowerKind){if(!canBuild(s,p,kind))return false;const cost=towers[kind].cost;s.gold-=cost;s.towers.push({...p,id:s.nextId++,kind,level:1,branch:-1,cool:0,angle:0,spent:cost,priority:'first'});effect(s,p,'build',0xffdb83,.6);return true}
-export function stats(t:Tower){const d=towers[t.kind],power=1+(t.level-1)*.62;return{damage:d.damage*power*(t.branch===0?1.4:1),range:d.range+(t.level-1)*10+(t.branch===0?20:0),rate:d.rate/(1+(t.level-1)*.13+(t.branch===1?.48:0))}}
-export function upgradeCost(t:Tower){return Math.round(towers[t.kind].cost*(t.level===1?.85:1.3))}
-export function upgrade(s:State,t:Tower,branch=-1){if(!s.towers.includes(t)||t.level>=3||s.gold<upgradeCost(t)||s.phase==='won'||s.phase==='lost'||(t.level===2&&![0,1].includes(branch)))return false;const cost=upgradeCost(t);s.gold-=cost;t.spent+=cost;t.level++;if(t.level===3)t.branch=branch;effect(s,t,'build',0xffdb83,.8);return true}
+export function stats(t:Tower){
+ const d=towers[t.kind],l=t.level-1,rank=Math.max(0,t.level-2);
+ let damage=d.damage*(1+l*.37),range=d.range+l*5,rate=d.rate/(1+l*.075);
+ let splash=0,extra=0,slowFactor=.58,slowDuration=1.8,poisonDps=7+l*2,corrosion=.5,burnDps=0;
+ if(t.kind==='bomb')splash=43+l*3;
+ if(t.branch===0)switch(t.kind){
+  case 'archer': damage*=1.35+rank*.08;range+=22+rank*5;break;
+  case 'ballista': damage*=1.25;extra=rank+1;break;
+  case 'mage': damage*=1.4+rank*.13;range+=15;break;
+  case 'frost': splash=32+rank*7;slowFactor=.5-rank*.04;slowDuration=2.3+rank*.4;break;
+  case 'bomb': splash+=15+rank*5;damage*=1.22;rate*=1.1;break;
+  case 'venom': poisonDps*=1.7+rank*.2;corrosion=.22;break;
+ }
+ if(t.branch===1)switch(t.kind){
+  case 'archer': extra=rank;rate*=.88;break;
+  case 'ballista': rate*=.75-rank*.045;damage*=1.1;break;
+  case 'mage': extra=rank;break;
+  case 'frost': extra=rank;damage*=2+rank*.15;break;
+  case 'bomb': burnDps=12+rank*6;rate*=.9;break;
+  case 'venom': splash=30+rank*7;poisonDps*=1.2;break;
+ }
+ return{damage,range,rate,splash,extra,slowFactor,slowDuration,poisonDps,corrosion,burnDps};
+}
+export function upgradeCost(t:Tower){return Math.round(towers[t.kind].cost*([.85,1.3,2,2.9][t.level-1]??0))}
+export function upgrade(s:State,t:Tower,branch=-1){if(!s.towers.includes(t)||t.level>=MAX_LEVEL||s.gold<upgradeCost(t)||s.phase==='won'||s.phase==='lost'||(t.level===2?![0,1].includes(branch):branch!==-1))return false;const cost=upgradeCost(t);s.gold-=cost;t.spent+=cost;t.level++;if(t.level===3)t.branch=branch;effect(s,t,'build',0xffdb83,.8);return true}
 export function sell(s:State,t:Tower){if(!s.towers.includes(t)||s.phase==='won'||s.phase==='lost')return false;s.gold+=Math.floor(t.spent*.65);s.towers=s.towers.filter(x=>x!==t);return true}
-export function start(s:State){if(s.phase!=='ready'||s.wave>=waves.length)return false;s.queue=waves[s.wave].flatMap(([kind,n])=>Array<EnemyKind>(n).fill(kind));s.wave++;s.phase='battle';s.spawn=0;effect(s,path[0],'wave',0xffdd91,1);return true}
+export function start(s:State){if(s.phase!=='ready'||s.wave>=waves.length)return false;const groups=waves[s.wave].map(([kind,n])=>({kind,n}));s.queue=[];while(groups.some(g=>g.n>0))for(const g of groups)if(g.n>0){s.queue.push(g.kind);g.n--}s.wave++;s.phase='battle';s.spawn=0;effect(s,path[0],'wave',0xffdd91,1);return true}
 function effect(s:State,p:Point,kind:Effect['kind'],color:number,life:number){s.effects.push({x:p.x,y:p.y,kind,color,life,max:life})}
-function spawn(s:State,kind:EnemyKind){const d=enemies[kind],hp=Math.round(d.hp*(1+(s.wave-1)*.09));s.enemies.push({id:s.nextId++,kind,hp,maxHp:hp,distance:0,...position(0),slow:0,poison:0,heal:2,hit:0})}
-function damage(s:State,e:Enemy,n:number,kind:TowerKind){const armor=kind==='mage'||kind==='frost'?0:enemies[e.kind].armor*(kind==='ballista'?.25:e.poison>0?.5:1);e.hp-=n*(1-armor);e.hit=.13;if(kind==='frost')e.slow=2.5;if(kind==='venom')e.poison=4;effect(s,e,'hit',towers[kind].color,.25)}
+function spawn(s:State,kind:EnemyKind){const d=enemies[kind],hp=Math.round(d.hp*(1+(s.wave-1)*.12+Math.max(0,s.wave-5)*.09));s.enemies.push({id:s.nextId++,kind,hp,maxHp:hp,distance:0,...position(0),slow:0,poison:0,heal:2,hit:0})}
+function damage(s:State,e:Enemy,n:number,t:Tower,st:ReturnType<typeof stats>){
+ const kind=t.kind,armor=kind==='mage'||kind==='frost'?0:enemies[e.kind].armor*(kind==='ballista'?(t.branch===1?.1:.25):1)*(e.poison>0?(e.corrosion??.5):1);
+ e.hp-=n*(1-armor);e.hit=.13;
+ if(kind==='frost'){e.slow=Math.max(e.slow,st.slowDuration);e.slowFactor=Math.min(e.slowFactor??1,st.slowFactor)}
+ if(kind==='venom'){e.poison=Math.max(e.poison,4);e.poisonDps=Math.max(e.poisonDps??0,st.poisonDps);e.corrosion=Math.min(e.corrosion??1,st.corrosion)}
+ if(st.burnDps){e.burn=Math.max(e.burn??0,3);e.burnDps=Math.max(e.burnDps??0,st.burnDps)}
+ effect(s,e,'hit',towers[kind].color,.25);
+}
+function shot(s:State,t:Tower,e:Enemy,from:Point={x:t.x,y:t.y-23}){
+ const life=t.kind==='bomb'?.28:t.kind==='mage'?.23:.18;
+ s.shots.push({...from,tx:e.x,ty:e.y-8,kind:t.kind,life,max:life});
+}
 export function step(s:State,dt:number,signal:(a:Signal)=>void=()=>{}){
- if(s.phase==='won'||s.phase==='lost')return;
  s.time+=dt;s.effects=s.effects.filter(e=>(e.life-=dt)>0);s.shots=s.shots.filter(e=>(e.life-=dt)>0);
  if(s.phase!=='battle')return;
- s.spawn-=dt;if(s.queue.length&&s.spawn<=0){spawn(s,s.queue.shift()!);s.spawn=.5}
- for(const e of s.enemies){if(e.hp<=0)continue;e.hit=Math.max(0,e.hit-dt);if(e.poison>0){e.hp-=dt*7;e.poison-=dt}if(e.slow>0)e.slow-=dt;e.distance+=dt*enemies[e.kind].speed*(e.slow>0?.53:1);Object.assign(e,position(e.distance));if(e.kind==='shaman'||e.kind==='boss'){e.heal-=dt;if(e.heal<=0){e.heal=3;for(const a of s.enemies)if(a!==e&&a.hp>0&&dist(a,e)<90){a.hp=Math.min(a.maxHp,a.hp+a.maxHp*.09);effect(s,a,'heal',0x9ee88a,.6)}}}}
- for(const t of s.towers){t.cool=Math.max(0,t.cool-dt);if(t.cool>0)continue;const st=stats(t);const targets=s.enemies.filter(e=>e.hp>0&&e.distance<routeLength&&dist(e,t)<=st.range);targets.sort((a,b)=>t.priority==='near'?dist(a,t)-dist(b,t):t.priority==='strong'?b.hp-a.hp:b.distance-a.distance);const e=targets[0];if(!e)continue;t.cool=st.rate;t.angle=Math.atan2(e.y-t.y,e.x-t.x);s.shots.push({x:t.x,y:t.y-14,tx:e.x,ty:e.y-8,kind:t.kind,life:.18,max:.18});damage(s,e,st.damage,t.kind);if(t.kind==='bomb'){for(const a of s.enemies)if(a!==e&&a.hp>0&&dist(a,e)<48)damage(s,a,st.damage*.72,t.kind);effect(s,e,'hit',0xffb16b,.5)}if(t.kind==='archer'&&t.branch===1&&targets[1])damage(s,targets[1],st.damage*.55,t.kind);signal(t.kind==='bomb'?'boom':t.kind==='mage'||t.kind==='frost'?'magic':'shoot')}
+ s.spawn-=dt;if(s.queue.length&&s.spawn<=0){spawn(s,s.queue.shift()!);s.spawn=Math.max(.24,.52-s.wave*.019)}
+ for(const e of s.enemies){if(e.hp<=0)continue;e.hit=Math.max(0,e.hit-dt);if(e.poison>0){e.hp-=dt*(e.poisonDps??7);e.poison-=dt;if(e.poison<=0){e.poisonDps=0;e.corrosion=1}}if(e.slow>0){e.slow-=dt;if(e.slow<=0)e.slowFactor=1}if((e.burn??0)>0){e.hp-=dt*(e.burnDps??0);e.burn=(e.burn??0)-dt;if(e.burn<=0)e.burnDps=0}if(e.hp<=0)continue;e.distance+=dt*enemies[e.kind].speed*(e.slow>0?(e.kind==='boss'?Math.max(.75,e.slowFactor??.58):e.slowFactor??.58):1);Object.assign(e,position(e.distance));if(e.kind==='shaman'||e.kind==='boss'){e.heal-=dt;if(e.heal<=0){e.heal=3;for(const a of s.enemies)if(a!==e&&a.hp>0&&dist(a,e)<90){a.hp=Math.min(a.maxHp,a.hp+a.maxHp*.09);effect(s,a,'heal',0x9ee88a,.6)}}}}
+ for(const t of s.towers){
+  t.cool=Math.max(0,t.cool-dt);if(t.cool>0)continue;
+  const st=stats(t),targets=s.enemies.filter(e=>e.hp>0&&e.distance<routeLength&&dist(e,t)<=st.range);
+  targets.sort((a,b)=>t.priority==='near'?dist(a,t)-dist(b,t):t.priority==='strong'?b.hp-a.hp:b.distance-a.distance);
+  const e=targets[0];if(!e)continue;t.cool=st.rate;t.angle=Math.atan2(e.y-t.y,e.x-t.x);shot(s,t,e);damage(s,e,st.damage,t,st);
+  const hit=new Set([e.id]);
+  if(st.splash){for(const a of s.enemies)if(!hit.has(a.id)&&a.hp>0&&dist(a,e)<st.splash){damage(s,a,st.damage*.65,t,st);hit.add(a.id)}effect(s,e,'hit',towers[t.kind].color,.5)}
+  let previous=e;
+  for(let i=0;i<st.extra;i++){
+   const a=t.kind==='mage'?s.enemies.filter(a=>a.hp>0&&!hit.has(a.id)&&dist(a,previous)<75).sort((a,b)=>dist(a,previous)-dist(b,previous))[0]:
+    t.kind==='ballista'?targets.find(a=>{const dx=a.x-t.x,dy=a.y-t.y,along=dx*Math.cos(t.angle)+dy*Math.sin(t.angle);return !hit.has(a.id)&&a.hp>0&&along>dist(e,t)-8&&Math.abs(dx*Math.sin(t.angle)-dy*Math.cos(t.angle))<20}):
+    targets.find(a=>a.hp>0&&!hit.has(a.id));
+   if(!a)break;shot(s,t,a,t.kind==='mage'?{x:previous.x,y:previous.y-8}:undefined);damage(s,a,st.damage*(t.kind==='ballista'?.72:.6),t,st);hit.add(a.id);previous=a;
+  }
+  signal(t.kind==='bomb'?'boom':t.kind==='mage'||t.kind==='frost'||t.kind==='venom'?'magic':'shoot')
+ }
  s.enemies=s.enemies.filter(e=>{if(e.hp<=0){const reward=enemies[e.kind].gold;s.gold+=reward;s.score+=reward*10;effect(s,e,'death',enemies[e.kind].color,.65);signal('death');return false}if(e.distance>=routeLength){s.lives=Math.max(0,s.lives-(e.kind==='boss'?5:1));effect(s,e,'leak',0xff5555,.7);signal('leak');return false}return true});
  if(s.lives===0){s.phase='lost';signal('lose');return}
  if(!s.queue.length&&!s.enemies.length){s.gold+=25+s.wave*3;s.score+=s.wave*100;if(s.wave===waves.length){s.phase='won';s.score+=s.lives*200;signal('win')}else{s.phase='ready'}}
@@ -41,8 +88,8 @@ export function validSave(v:unknown):v is State{
  if(s.version!==1||!nonnegative(s.gold)||!Number.isInteger(s.wave)||s.wave<0||s.wave>waves.length||!nonnegative(s.lives)||s.lives>20||!nonnegative(s.score)||!nonnegative(s.time)||!Number.isSafeInteger(s.nextId)||s.nextId<1||!finite(s.spawn)||!['ready','battle','won','lost'].includes(s.phase))return false;
  const ids=new Set<number>();
  const validId=(id:number)=>{if(!Number.isSafeInteger(id)||id<1||id>=s.nextId||ids.has(id))return false;ids.add(id);return true};
- return Array.isArray(s.towers)&&s.towers.length<=400&&s.towers.every(t=>isPoint(t)&&Object.hasOwn(towers,t.kind)&&validId(t.id)&&[1,2,3].includes(t.level)&&(t.level===3?[0,1].includes(t.branch):t.branch===-1)&&nonnegative(t.cool)&&finite(t.angle)&&nonnegative(t.spent)&&['first','strong','near'].includes(t.priority))&&
- Array.isArray(s.enemies)&&s.enemies.length<=1000&&s.enemies.every(e=>isPoint(e)&&Object.hasOwn(enemies,e.kind)&&validId(e.id)&&finite(e.hp)&&nonnegative(e.maxHp)&&e.maxHp>0&&nonnegative(e.distance)&&finite(e.angle)&&finite(e.slow)&&finite(e.poison)&&finite(e.heal)&&finite(e.hit))&&
+ return Array.isArray(s.towers)&&s.towers.length<=400&&s.towers.every(t=>isPoint(t)&&Object.hasOwn(towers,t.kind)&&validId(t.id)&&[1,2,3,4,5].includes(t.level)&&(t.level>=3?[0,1].includes(t.branch):t.branch===-1)&&nonnegative(t.cool)&&finite(t.angle)&&nonnegative(t.spent)&&['first','strong','near'].includes(t.priority))&&
+ Array.isArray(s.enemies)&&s.enemies.length<=1000&&s.enemies.every(e=>isPoint(e)&&Object.hasOwn(enemies,e.kind)&&validId(e.id)&&finite(e.hp)&&nonnegative(e.maxHp)&&e.maxHp>0&&nonnegative(e.distance)&&finite(e.angle)&&finite(e.slow)&&finite(e.poison)&&finite(e.heal)&&finite(e.hit)&&[e.slowFactor,e.poisonDps,e.corrosion,e.burn,e.burnDps].every(n=>n===undefined||finite(n)))&&
  Array.isArray(s.queue)&&s.queue.length<=1000&&s.queue.every(k=>typeof k==='string'&&Object.hasOwn(enemies,k))&&
  Array.isArray(s.shots)&&s.shots.length<=3000&&s.shots.every(a=>isPoint(a)&&Object.hasOwn(towers,a.kind)&&finite(a.tx)&&finite(a.ty)&&nonnegative(a.life)&&finite(a.max)&&a.max>0)&&
  Array.isArray(s.effects)&&s.effects.length<=3000&&s.effects.every(a=>isPoint(a)&&['hit','death','build','heal','leak','wave'].includes(a.kind)&&Number.isInteger(a.color)&&a.color>=0&&a.color<=0xffffff&&nonnegative(a.life)&&finite(a.max)&&a.max>0);

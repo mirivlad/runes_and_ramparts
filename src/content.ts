@@ -11,6 +11,16 @@ export const towers={
  venom:{name:'Алхимик',cost:95,damage:12,range:116,rate:.85,color:0xc6dc70,desc:'Яд и разрушение брони.',branches:['Кислота','Чума']}
 } as const;
 export type TowerKind=keyof typeof towers;
+export const MAX_LEVEL=5;
+export const specializations:Record<TowerKind,readonly [string,string]>={
+ archer:['Дальнобойные мощные стрелы, повышенный урон по одной цели.','Одновременная стрельба по нескольким целям.'],
+ ballista:['Тяжёлый болт пробивает несколько врагов и почти всю броню.','Ускоренная перезарядка и более сильный пробой брони.'],
+ mage:['Мощная руническая магия против одиночных целей.','Магическая дуга перескакивает на соседних врагов.'],
+ frost:['Долгое глубокое замедление по площади.','Усиленные осколки поражают несколько целей.'],
+ bomb:['Большой радиус взрыва и высокий урон по толпе.','Зажигательные снаряды оставляют горение.'],
+ venom:['Кислота сильнее разрушает броню и наносит урон.','Чумное облако заражает соседних противников.']
+};
+export const towerColors:Record<TowerKind,number>={archer:0xe8b56e,ballista:0xc4cbd2,mage:0xbf91ee,frost:0x9ee9ff,bomb:0xff9b58,venom:0xb5dc68};
 export const enemies={
  goblin:{name:'Гоблин',hp:45,speed:62,armor:0,gold:9,color:0x83a74b,size:12},
  orc:{name:'Орк',hp:135,speed:37,armor:.35,gold:16,color:0x74894b,size:16},
